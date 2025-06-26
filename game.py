@@ -60,7 +60,6 @@ class Game:
         if self.previous_board is not None and np.array_equal(
             test_board_state, self.previous_board
         ):
-            print("that would be KO")
             return False
 
         # Check for liberties (suicide rule)
@@ -112,7 +111,6 @@ class Game:
         self.previous_board = self.board.board.copy()
         self.current_player = self.get_opponent(self.current_player)
         self.passes += 1
-        print(f"Player {self.get_opponent(self.current_player)} passes.")
         if self.passes >= 2:
             self.end_game()
 
