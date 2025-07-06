@@ -85,7 +85,7 @@ def main():
             from mcts import MCTSNode, mcts_neural
             root = MCTSNode(state=state, parent=None, move=None)
             print("AI is thinking...")
-            best_child = mcts_neural(net, root, iterations=200)
+            best_child = mcts_neural(net, root, iterations=1000)
             move = best_child.move
             if move == (-1, -1):
                 move_str = "PASS"

@@ -23,10 +23,16 @@ class MCTSNode:
     visits: int = 0
     value: float = 0.0  # sum of scores from rollouts
     children: list[Self] = field(default_factory=list)
+    depth: int = field(init=False)  # depth of this node in the search tree
     untried_moves: list = field(init=False)
 
     def __post_init__(self):
         self.untried_moves = self.state.get_moves()
+        # Calculate depth based on parent
+        if self.parent is None:
+            self.depth = 0
+        else:
+            self.depth = self.parent.depth + 1
 
     def uct_score(self, parent_visits: int) -> float:
         if self.visits == 0:
@@ -78,12 +84,27 @@ def mcts_neural(
 
     children = root.children[:]
     children.sort(key=lambda n: n.visits, reverse=True)
-    # for c in children[:5]:
-    # print("move: ", c.move)
-    # print("visits: ", c.visits)
+    for c in children[:5]:
+        if DEBUG:
+            pred_value = value_net.predict(c.state)
+            try:
+                pred_value_f = float(pred_value)  # type: ignore[arg-type]
+            except Exception:
+                pred_value_f = pred_value
+            canonical_reward = pred_value_f + c.state.blacks_points  # type: ignore[arg-type]
+            if not c.state.blacks_turn:
+                canonical_reward = -canonical_reward
+            print(f"move: {c.move}, visits: {c.visits}, pred_value: {pred_value_f:.4f}, canonical_reward: {canonical_reward:.4f}")
     # select best move based on visits (opposed to value) to make sure we dont accidentally choose an under-explored
     # branch with seemingly good value
     best_child = max(root.children, key=lambda n: n.visits)
+    if DEBUG and best_child is not None:
+        pred_value = value_net.predict(best_child.state)
+        try:
+            pred_value_f = float(pred_value)  # type: ignore[arg-type]
+        except Exception:
+            pred_value_f = pred_value
+        print(f"Best move: {best_child.move}, visits: {best_child.visits}, pred_value: {pred_value_f:.4f}")  # type: ignore[arg-type]
     return best_child
 
 
@@ -187,14 +208,14 @@ if __name__ == "__main__":
     # selfplay
     for loopi in range(100):
         print("play-train loop: ", loopi)
-        num_games_to_play = 20
+        num_games_to_play = 30
         all_training_samples = []
         print(
             f"Starting self-play to generate training data for {num_games_to_play} games..."
         )
         for i in tqdm(range(num_games_to_play)):
             # In self-play, we can use fewer MCTS iterations to generate games faster.
-            training_samples = play_game(net, iterations_per_move=200)
+            training_samples = play_game(net, iterations_per_move=150)
             all_training_samples.extend(training_samples)
 
         print(f"\nGenerated {len(all_training_samples)} training samples.")
