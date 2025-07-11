@@ -2,12 +2,119 @@ import enum
 from dataclasses import dataclass
 
 import numpy as np
+from numba import jit
+from numba.core import types
+from numba.typed import List
+
+# Numba-friendly constants and types
+int_tuple = types.UniTuple(types.int64, 2)
+BLACK_STONE = 2
+WHITE_STONE = 1
+EMPTY_STONE = 0
+
+
+@jit(nopython=True)
+def _get_group_jit(
+    board: np.ndarray, x: int, y: int
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """
+    Finds the group of connected stones of the same color and their liberties.
+    Numba-jitted version.
+    """
+    stone_color = board[x, y]
+    if stone_color == EMPTY_STONE:
+        return List.empty_list(int_tuple), List.empty_list(int_tuple)
+
+    group = List.empty_list(int_tuple)
+    liberties = List.empty_list(int_tuple)
+    stack = List([(x, y)])
+
+    visited_group = np.zeros_like(board, dtype=np.bool_)
+    visited_group[x, y] = True
+
+    visited_liberties = np.zeros_like(board, dtype=np.bool_)
+
+    while len(stack) > 0:
+        cx, cy = stack.pop()
+        group.append((cx, cy))
+
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nx, ny = cx + dx, cy + dy
+            if 0 <= nx < 9 and 0 <= ny < 9:
+                neighbor_stone = board[nx, ny]
+                if neighbor_stone == stone_color:
+                    if not visited_group[nx, ny]:
+                        visited_group[nx, ny] = True
+                        stack.append((nx, ny))
+                elif neighbor_stone == EMPTY_STONE:
+                    if not visited_liberties[nx, ny]:
+                        visited_liberties[nx, ny] = True
+                        liberties.append((nx, ny))
+    return group, liberties
+
+
+@jit(nopython=True)
+def _apply_move_jit(
+    board: np.ndarray, move: tuple[int, int], blacks_turn: bool
+) -> tuple[np.ndarray, int]:
+    """
+    Applies a move to the board and returns the new board and captured stones.
+    Does not check for legality.
+    """
+    x, y = move
+    new_board = board.copy()
+    stone_color = BLACK_STONE if blacks_turn else WHITE_STONE
+    new_board[x, y] = stone_color
+
+    opponent_color = WHITE_STONE if blacks_turn else BLACK_STONE
+    captured_stones = 0
+
+    for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+        nx, ny = x + dx, y + dy
+        if 0 <= nx < 9 and 0 <= ny < 9:
+            if new_board[nx, ny] == opponent_color:
+                group, liberties = _get_group_jit(new_board, nx, ny)
+                if len(liberties) == 0 and len(group) > 0:
+                    captured_stones += len(group)
+                    for gx, gy in group:
+                        new_board[gx, gy] = EMPTY_STONE
+
+    return new_board, captured_stones
+
+
+@jit(nopython=True)
+def _is_move_legal_jit(
+    board: np.ndarray,
+    previous_board: np.ndarray,
+    move: tuple[int, int],
+    blacks_turn: bool,
+) -> bool:
+    """
+    Checks if a move is legal (not suicide, not Ko).
+    Numba-jitted version.
+    """
+    x, y = move
+    if board[x, y] != EMPTY_STONE:
+        return False
+
+    new_board, captured_stones = _apply_move_jit(board, move, blacks_turn)
+
+    # Check for suicide
+    my_group, my_liberties = _get_group_jit(new_board, x, y)
+    if len(my_liberties) == 0 and captured_stones == 0:
+        return False  # Illegal suicide move
+
+    # Check for Ko
+    if np.array_equal(new_board, previous_board):
+        return False  # Ko rule violation
+
+    return True
 
 
 class Stone(enum.Enum):
-    WHITE = 1
-    BLACK = 2
-    EMPTY = 0
+    WHITE = WHITE_STONE
+    BLACK = BLACK_STONE
+    EMPTY = EMPTY_STONE
 
 
 class Board(np.ndarray):
@@ -26,7 +133,7 @@ class Board(np.ndarray):
         return "\n".join(lines)
 
     @staticmethod
-    def empty() -> 'Board':
+    def empty() -> "Board":
         return Board(np.zeros((9, 9), dtype=int))
 
 
@@ -40,7 +147,7 @@ class Gamestate:
     game_over: bool
 
     @staticmethod
-    def empty() -> 'Gamestate':
+    def empty() -> "Gamestate":
         return Gamestate(
             previous=Board.empty(),
             board=Board.empty(),
@@ -109,28 +216,10 @@ class Gamestate:
         if stone_color == Stone.EMPTY.value:
             return set(), set()
 
-        liberties: set[tuple[int, int]] = set()
-        stack = [(x, y)]
-        visited: set[tuple[int, int]] = set()
+        group_list, liberties_list = _get_group_jit(board, x, y)
+        return set(group_list), set(liberties_list)
 
-        while stack:
-            cx, cy = stack.pop()
-            if (cx, cy) in visited:
-                continue
-            visited.add((cx, cy))
-
-            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                nx, ny = cx + dx, cy + dy
-                if 0 <= nx < 9 and 0 <= ny < 9:
-                    neighbor_stone = board[nx, ny]
-                    if neighbor_stone == stone_color:
-                        if (nx, ny) not in visited:
-                            stack.append((nx, ny))
-                    elif neighbor_stone == Stone.EMPTY.value:
-                        liberties.add((nx, ny))
-        return visited, liberties
-
-    def do_move(self, move: tuple[int, int]) -> 'Gamestate':
+    def do_move(self, move: tuple[int, int]) -> "Gamestate":
         if move == (-1, -1):
             return Gamestate(
                 previous=self.board,
@@ -140,39 +229,13 @@ class Gamestate:
                 last_move_was_pass=True,
                 game_over=self.last_move_was_pass,
             )
-        x, y = move
-        if self.board[x, y] != Stone.EMPTY.value:
-            raise ValueError("Position is not empty")
 
-        new_board = self.board.copy()
-        stone_color = Stone.BLACK.value if self.blacks_turn else Stone.WHITE.value
-        new_board[x, y] = stone_color
+        if not _is_move_legal_jit(self.board, self.previous, move, self.blacks_turn):
+            raise ValueError("Illegal move")
 
-        opponent_color = Stone.WHITE.value if self.blacks_turn else Stone.BLACK.value
-        captured_stones = 0
-
-        def neighbors(x, y):
-            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < 9 and 0 <= ny < 9:
-                    yield nx, ny
-
-        for nx, ny in neighbors(x, y):
-            if new_board[nx, ny] == opponent_color:
-                group, liberties = self._get_group(new_board, nx, ny)
-                if not liberties:
-                    captured_stones += len(group)
-                    for gx, gy in group:
-                        new_board[gx, gy] = Stone.EMPTY.value
-
-        # Check for suicide
-        my_group, my_liberties = self._get_group(new_board, x, y)
-        if not my_liberties and captured_stones == 0:
-            raise ValueError("Illegal suicide move")
-
-        # Check for Ko
-        if np.array_equal(new_board, self.previous):
-            raise ValueError("Ko rule violation")
+        new_board_arr, captured_stones = _apply_move_jit(
+            self.board, move, self.blacks_turn
+        )
 
         new_blacks_points = self.blacks_points
         if self.blacks_turn:
@@ -182,7 +245,7 @@ class Gamestate:
 
         return Gamestate(
             previous=self.board,
-            board=new_board,
+            board=Board(new_board_arr),
             blacks_points=new_blacks_points,
             blacks_turn=not self.blacks_turn,
             last_move_was_pass=False,
@@ -194,10 +257,8 @@ class Gamestate:
         for x in range(9):
             for y in range(9):
                 if self.board[x, y] == Stone.EMPTY.value:
-                    try:
-                        self.do_move((x, y))
+                    if _is_move_legal_jit(
+                        self.board, self.previous, (x, y), self.blacks_turn
+                    ):
                         moves.append((x, y))
-                    except ValueError:
-                        # Illegal move (suicide or Ko)
-                        pass
         return moves
