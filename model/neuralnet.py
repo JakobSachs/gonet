@@ -11,7 +11,7 @@ import os
 DEBUG = os.environ.get("DEBUG") == "1"
 
 
-class Valuenet:
+class Neuralnet:
     def __init__(self):
         # input: (9x9x3) (board_dim x board_dim x (black,white,valid_moves)
         # i think doing this should be fine, we dont need to pass in previous board since the ko-related info
@@ -21,37 +21,38 @@ class Valuenet:
         self.l2 = nn.Conv2d(32, 64, kernel_size=(3, 3), padding=1)  # out: (9x9x64)
         self.l3 = nn.Conv2d(64, 128, kernel_size=(3, 3), padding=1)  # out: (9x9x128)
         self.l4 = nn.Conv2d(128, 256, kernel_size=(3, 3), padding=1)  # out: (9x9x256)
-        self.l5 = nn.Linear(9 * 9 * 256, 100)
-        self.out = nn.Linear(100, 1)
+        self.l5 = nn.Linear(9 * 9 * 256, 1000)
+        self.value_out = nn.Linear(1000, 1)
+        self.policy_out = nn.Linear(9 * 9 + 1, 1)
 
     def __call__(self, x: Tensor) -> Tensor:
         if DEBUG:
-            print(f"[Valuenet] Input shape: {x.shape}")
+            print(f"[Neuralnet] Input shape: {x.shape}")
         x = self.l1(x).relu()
         if DEBUG:
-            print(f"[Valuenet] After l1: {x.shape}")
+            print(f"[Neuralnet] After l1: {x.shape}")
         x = self.l2(x).relu()
         if DEBUG:
-            print(f"[Valuenet] After l2: {x.shape}")
-        x = self.l3(x).relu() 
+            print(f"[Neuralnet] After l2: {x.shape}")
+        x = self.l3(x).relu()
         if DEBUG:
-            print(f"[Valuenet] After l3: {x.shape}")
+            print(f"[Neuralnet] After l3: {x.shape}")
         x = self.l4(x).relu().flatten(1)
         if DEBUG:
-            print(f"[Valuenet] After l4: {x.shape}")
+            print(f"[Neuralnet] After l4: {x.shape}")
         x = self.l5(x).relu()
         if DEBUG:
-            print(f"[Valuenet] After l5: {x.shape}")
+            print(f"[Neuralnet] After l5: {x.shape}")
         out = self.out(x.tanh())
         if DEBUG:
-            print(f"[Valuenet] Output: {out}")
+            print(f"[Neuralnet] Output: {out}")
         return out
 
     @TinyJit
     def predict(self, state: Gamestate) -> float:
         t = self._state_to_tens(state)
         if DEBUG:
-            print(f"[Valuenet.predict] State: {state}")
+            print(f"[Neuralnet.predict] State: {state}")
         return float(self(t).numpy()[0, 0])
 
     @staticmethod
@@ -105,7 +106,7 @@ class Valuenet:
         for t, o in zip(tensors, outcomes):
             augmented_t = self._augment(t)
             augmented_tensors.extend(augmented_t)
-            
+
             augmented_outcomes.extend([o] * len(augmented_t))
 
         perm = np.random.permutation(len(augmented_tensors))
@@ -140,7 +141,7 @@ class Valuenet:
 
 if __name__ == "__main__":
     s = Gamestate.empty()
-    net = Valuenet()
+    net = Neuralnet()
     print(f"prediction before training: {float(net.predict(s)):.4f}")  # type: ignore[arg-type]
 
     # create some dummy training data

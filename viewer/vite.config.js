@@ -14,7 +14,7 @@ export default defineConfig({
     // expose your websocket URL at build time
     // e.g. .env → VITE_WS_URL=wss://api.example.com/ws
     "import.meta.env.VITE_WS_URL": JSON.stringify(
-      process.env.VITE_WS_URL || "ws://localhost:8000/ws",
+      process.env.VITE_WS_URL || "ws:/0.0.0.0:8765/",
     ),
   },
 });

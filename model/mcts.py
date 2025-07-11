@@ -67,7 +67,7 @@ def mcts_neural(
             node.children.append(child)
             node = child
 
-        # estimate 'rollout' per neural-net value estimation
+        # ROLLOUT/Q-value guessing 
         pred_value = value_net.predict(node.state)
         canonical_reward = pred_value + node.state.blacks_points
         if not node.state.blacks_turn:
@@ -84,88 +84,12 @@ def mcts_neural(
 
     children = root.children[:]
     children.sort(key=lambda n: n.visits, reverse=True)
-    for c in children[:5]:
-        if DEBUG:
-            pred_value = value_net.predict(c.state)
-            try:
-                pred_value_f = float(pred_value)  # type: ignore[arg-type]
-            except Exception:
-                pred_value_f = pred_value
-            canonical_reward = pred_value_f + c.state.blacks_points  # type: ignore[arg-type]
-            if not c.state.blacks_turn:
-                canonical_reward = -canonical_reward
-            print(f"move: {c.move}, visits: {c.visits}, pred_value: {pred_value_f:.4f}, canonical_reward: {canonical_reward:.4f}")
-    # select best move based on visits (opposed to value) to make sure we dont accidentally choose an under-explored
-    # branch with seemingly good value
-    best_child = max(root.children, key=lambda n: n.visits)
-    if DEBUG and best_child is not None:
-        pred_value = value_net.predict(best_child.state)
-        try:
-            pred_value_f = float(pred_value)  # type: ignore[arg-type]
-        except Exception:
-            pred_value_f = pred_value
-        print(f"Best move: {best_child.move}, visits: {best_child.visits}, pred_value: {pred_value_f:.4f}")  # type: ignore[arg-type]
-    return best_child
-
-
-def mcts_vanilla(
-    root: MCTSNode,
-    iterations: int = 100,
-    rollout_depth: int = 100,
-) -> MCTSNode:
-
-    # each iteration checks a possible node in the tree
-    for _ in range(iterations):
-        # traverse tree till we find a note to expand, ordering based on UCT-score
-        node = root
-        while (
-            not node.state.game_over and len(node.untried_moves) == 0 and node.children
-        ):
-            # choose child with highest UCT
-            node = max(node.children, key=lambda n: n.uct_score(node.visits))
-
-        # expand chosen note by randomly choosing a child
-        if not node.state.game_over and node.untried_moves:
-            m = node.untried_moves.pop(random.randrange(len(node.untried_moves)))
-            next_state = node.state.do_move(m)
-            child = MCTSNode(state=next_state, parent=node, move=m)
-            node.children.append(child)
-            node = child
-
-        # simulate chosen child by random playout
-        rollout_state = node.state
-        depth = 0
-        while (not rollout_state.game_over) and depth < rollout_depth:
-            moves = rollout_state.get_moves()
-            if not moves:
-                break
-            m = random.choice(moves)
-            rollout_state = rollout_state.do_move(m)
-            depth += 1
-
-        # at end of rollout, get the score from black's perspective
-        canonical_reward = rollout_state.score()  # Black's score - White's score
-
-        # propagate resulting value up the search-tree
-        while node is not None:
-            node.visits += 1
-            if node.state.blacks_turn:
-                node.value += canonical_reward
-            else:
-                node.value -= canonical_reward
-            node = node.parent
-
-    children = root.children[:]
-    children.sort(key=lambda n: n.visits, reverse=True)
-
-    for c in children[:5]:
-        print("move: ", c.move)
-        print("visits: ", c.visits)
 
     # select best move based on visits (opposed to value) to make sure we dont accidentally choose an under-explored
     # branch with seemingly good value
     best_child = max(root.children, key=lambda n: n.visits)
     return best_child
+
 
 
 def play_game(

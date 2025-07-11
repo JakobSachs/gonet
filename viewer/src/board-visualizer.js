@@ -95,26 +95,68 @@ class Board {
   }
 }
 
-export function initVisualizer({ container, boardCount }) {
+export function initVisualizer({ container, boardCount, wsUrl }) {
+  // Create a dedicated grid container
+  const gridContainer = document.createElement("div");
+  container.appendChild(gridContainer);
+
   // 1) Setup container style
-  container.style.display = "grid";
-  container.style.gridTemplateColumns = `repeat(auto-fill, minmax(${BOARD_PIXELS}px, 1fr))`;
-  container.style.gap = `${BOARD_GAP}px`;
-  container.style.padding = `${BOARD_GAP}px`;
+  const numCols = Math.ceil(Math.sqrt(boardCount));
+  const gridWidth = numCols * (BOARD_PIXELS + BOARD_GAP) - BOARD_GAP;
+  gridContainer.style.display = "grid";
+  gridContainer.style.gridTemplateColumns = `repeat(${numCols}, 1fr)`;
+  gridContainer.style.gap = `${BOARD_GAP}px`;
+  gridContainer.style.width = `${gridWidth}px`;
 
   // 2) Instantiate all boards
-  const boards = Array.from({ length: boardCount }, () => new Board(container));
+  const boards = Array.from(
+    { length: boardCount },
+    () => new Board(gridContainer),
+  );
 
-  // 3) Simulate periodic updates from an external source
-  function simulateRandomUpdates() {
-    const board = boards[Math.floor(Math.random() * boardCount)];
-    const x = Math.floor(Math.random() * GRID_SIZE);
-    const y = Math.floor(Math.random() * GRID_SIZE);
-    const color = Math.floor(Math.random() * 3); // 0=empty, 1=black, 2=white
-    board.applyMove(x, y, color);
-  }
+  // 3) Connect to WebSocket for game updates
+  const ws = new WebSocket(wsUrl);
 
-  setInterval(simulateRandomUpdates, 50); // Update 20 times per second
+  ws.onopen = () => {
+    console.log("WebSocket connection established. Requesting initial state.");
+    // Request the full game state upon connecting
+    ws.send(JSON.stringify({ type: "get_initial_state" }));
+  };
+
+  ws.onerror = (err) => console.error("WebSocket error:", err);
+  ws.onclose = () => console.log("WebSocket connection closed");
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    const { type, payload } = msg;
+
+    if (type === "initial_state") {
+      // The server sent the full state of all boards
+      console.log("Received initial state. Applying to all boards.");
+      payload.forEach((boardState, board_idx) => {
+        if (board_idx < boards.length) {
+          // Directly set the board's state
+          boards[board_idx].state = new Uint8Array(boardState);
+          boards[board_idx].needsDraw = true;
+        }
+      });
+    } else if (type === "move_update") {
+      // The server sent a single move update
+      const { board_idx, x, y, color } = payload;
+      if (board_idx >= 0 && board_idx < boards.length) {
+        boards[board_idx].applyMove(x, y, color);
+      }
+    } else if (type === "board_reset") {
+      // The server signaled a board reset
+      const { board_idx } = payload;
+      if (board_idx >= 0 && board_idx < boards.length) {
+        console.log(`Resetting board ${board_idx}`);
+        // Reset the board's state to be empty
+        boards[board_idx].state = new Uint8Array(GRID_SIZE * GRID_SIZE);
+        boards[board_idx].needsDraw = true;
+      }
+    }
+  };
 
   // 4) Main render loop
   function renderLoop() {
